@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dragon-Style Medical Dictation</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      }
+
+      body {
+        background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .header {
+        background: rgba(255, 255, 255, 0.1);
+        padding: 15px;
+        text-align: center;
+        color: white;
+        backdrop-filter: blur(10px);
+      }
+
+      .main-container {
+        flex: 1;
+        display: grid;
+        grid-template-columns: 300px 1fr 300px;
+        gap: 20px;
+        padding: 20px;
+        max-width: 1600px;
+        margin: 0 auto;
+        width: 100%;
+      }
+
+      .sidebar {
+        background: rgba(255, 255, 255, 0.95);
+        border-radius: 10px;
+        padding: 20px;
+        backdrop-filter: blur(10px);
+      }
+
+      .main-panel {
+        background: white;
+        border-radius: 10px;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+      }
+
+      .dictation-controls {
+        padding: 20px;
+        background: #f8f9fa;
+        border-bottom: 1px solid #e9ecef;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 20px;
+      }
+
+      .dictation-btn {
+        background: #dc3545;
+        color: white;
+        border: none;
+        border-radius: 50px;
+        padding: 15px 30px;
+        font-size: 16px;
+        font-weight: bold;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        min-width: 150px;
+      }
+
+      .dictation-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+      }
+
+      .dictation-btn.listening {
+        background: #28a745;
+        animation: pulse 2s infinite;
+      }
+
+      .dictation-btn.processing {
+        background: #ffc107;
+        color: #212529;
+      }
+
+      .status-indicator {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 500;
+      }
+
+      .status-dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: #6c757d;
+        transition: all 0.3s ease;
+      }
+
+      .status-dot.listening {
+        background: #28a745;
+        animation: blink 1s infinite;
+      }
+
+      .status-dot.processing {
+        background: #ffc107;
+        animation: spin 1s linear infinite;
+      }
+
+      @keyframes pulse {
+        0%,
+        100% {
+          transform: scale(1);
+        }
+        50% {
+          transform: scale(1.05);
+        }
+      }
+
+      @keyframes blink {
+        0%,
+        50% {
+          opacity: 1;
+        }
+        51%,
+        100% {
+          opacity: 0.3;
+        }
+      }
+
+      @keyframes spin {
+        0% {
+          transform: rotate(0deg);
+        }
+        100% {
+          transform: rotate(360deg);
+        }
+      }
+
+      .document-area {
+        flex: 1;
+        padding: 20px;
+        overflow-y: auto;
+        background: white;
+      }
+
+      .document-content {
+        min-height: 100%;
+        outline: none;
+        line-height: 1.6;
+        font-size: 16px;
+        color: #333;
+        white-space: pre-wrap;
+      }
+
+      .document-content:empty:before {
+        content: "Start dictating to begin your medical report...";
+        color: #adb5bd;
+        font-style: italic;
+      }
+
+      .real-time-text {
+        background: rgba(255, 193, 7, 0.1);
+        padding: 2px 4px;
+        border-radius: 3px;
+        border-left: 3px solid #ffc107;
+        animation: fadeIn 0.3s ease;
+      }
+
+      @keyframes fadeIn {
+        from {
+          opacity: 0;
+          transform: translateY(-5px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      .enhanced-text {
+        background: rgba(40, 167, 69, 0.1);
+        padding: 1px 3px;
+        border-radius: 2px;
+        transition: background 0.5s ease;
+      }
+
+      .command-feedback {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: rgba(0, 0, 0, 0.8);
+        color: white;
+        padding: 20px 40px;
+        border-radius: 10px;
+        font-size: 18px;
+        z-index: 1000;
+        animation: commandPop 0.5s ease;
+      }
+
+      @keyframes commandPop {
+        0% {
+          opacity: 0;
+          transform: translate(-50%, -50%) scale(0.8);
+        }
+        100% {
+          opacity: 1;
+          transform: translate(-50%, -50%) scale(1);
+        }
+      }
+
+      .sidebar h3 {
+        color: #1e3c72;
+        margin-bottom: 15px;
+        font-size: 18px;
+      }
+
+      .stats-item {
+        display: flex;
+        justify-content: space-between;
+        padding: 8px 0;
+        border-bottom: 1px solid #e9ecef;
+      }
+
+      .stats-item:last-child {
+        border-bottom: none;
+      }
+
+      .vocab-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+        margin-top: 10px;
+      }
+
+      .vocab-tag {
+        background: #e3f2fd;
+        color: #1976d2;
+        padding: 3px 8px;
+        border-radius: 12px;
+        font-size: 12px;
+      }
+
+      .commands-list {
+        max-height: 200px;
+        overflow-y: auto;
+      }
+
+      .command-item {
+        padding: 5px 0;
+        font-size: 14px;
+      }
+
+      .command-trigger {
+        font-weight: bold;
+        color: #1e3c72;
+      }
+
+      .audio-level {
+        width: 100%;
+        height: 20px;
+        background: #e9ecef;
+        border-radius: 10px;
+        overflow: hidden;
+        margin: 10px 0;
+      }
+
+      .audio-level-bar {
+        height: 100%;
+        background: linear-gradient(to right, #28a745, #ffc107, #dc3545);
+        width: 0%;
+        transition: width 0.1s ease;
+      }
+
+      @media (max-width: 1200px) {
+        .main-container {
+          grid-template-columns: 1fr;
+          grid-template-rows: auto 1fr auto;
+        }
+
+        .sidebar {
+          order: 2;
+        }
+
+        .sidebar:first-child {
+          order: 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="header">
+      <h1>🏥 Dragon-Style Medical Dictation</h1>
+      <p>Professional real-time speech recognition for medical professionals</p>
+    </div>
+
+    <div class="main-container">
+      <!-- Left Sidebar: Stats & Status -->
+      <div class="sidebar">
+        <h3>📊 Session Statistics</h3>
+        <div class="stats-item">
+          <span>Words Dictated:</span>
+          <strong id="wordsCount">0</strong>
+        </div>
+        <div class="stats-item">
+          <span>Commands:</span>
+          <strong id="commandsCount">0</strong>
+        </div>
+        <div class="stats-item">
+          <span>Corrections:</span>
+          <strong id="correctionsCount">0</strong>
+        </div>
+        <div class="stats-item">
+          <span>Session Time:</span>
+          <strong id="sessionTime">00:00</strong>
+        </div>
+
+        <h3>🎤 Audio Level</h3>
+        <div class="audio-level">
+          <div class="audio-level-bar" id="audioLevelBar"></div>
+        </div>
+
+        <h3>🧠 Recent Enhancements</h3>
+        <div id="recentEnhancements">
+          <p style="color: #6c757d; font-style: italic">
+            Waiting for dictation...
+          </p>
+        </div>
+      </div>
+
+      <!-- Main Panel: Document Area -->
+      <div class="main-panel">
+        <div class="dictation-controls">
+          <button id="dictationBtn" class="dictation-btn">
+            🎤 Start Dictation
+          </button>
+          <div class="status-indicator">
+            <div class="status-dot" id="statusDot"></div>
+            <span id="statusText">Ready</span>
+          </div>
+        </div>
+
+        <div class="document-area">
+          <div
+            id="documentContent"
+            class="document-content"
+            contenteditable="true"
+            spellcheck="false"
+          ></div>
+        </div>
+      </div>
+
+      <!-- Right Sidebar: Commands & Vocabulary -->
+      <div class="sidebar">
+        <h3>🎤 Voice Commands</h3>
+        <div class="commands-list">
+          <div class="command-item">
+            <span class="command-trigger">"New paragraph"</span><br />
+            <small>Insert paragraph break</small>
+          </div>
+          <div class="command-item">
+            <span class="command-trigger">"Bold that"</span><br />
+            <small>Make previous text bold</small>
+          </div>
+          <div class="command-item">
+            <span class="command-trigger">"Scratch that"</span><br />
+            <small>Delete previous sentence</small>
+          </div>
+          <div class="command-item">
+            <span class="command-trigger">"Impression colon"</span><br />
+            <small>Start impression section</small>
+          </div>
+          <div class="command-item">
+            <span class="command-trigger">"Next line"</span><br />
+            <small>Insert line break</small>
+          </div>
+        </div>
+
+        <h3>🏥 Active Vocabulary</h3>
+        <div class="vocab-tags" id="vocabTags">
+          <span class="vocab-tag">CT Terms</span>
+          <span class="vocab-tag">MRI Sequences</span>
+          <span class="vocab-tag">Anatomy</span>
+          <span class="vocab-tag">Pathology</span>
+          <span class="vocab-tag">Measurements</span>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      class DragonStyleDictation {
+        constructor() {
+          this.socket = io();
+          this.isListening = false;
+          this.audioContext = null;
+          this.mediaStream = null;
+          this.audioProcessor = null;
+          this.recognition = null;
+
+          this.sessionStartTime = null;
+          this.sessionStats = {
+            words: 0,
+            commands: 0,
+            corrections: 0,
+          };
+
+          this.realtimeBuffer = "";
+          this.cursorPosition = 0;
+
+          this.initializeElements();
+          this.initializeSocket();
+          this.initializeWebSpeechAPI();
+          this.startSessionTimer();
+        }
+
+        initializeElements() {
+          this.dictationBtn = document.getElementById("dictationBtn");
+          this.statusDot = document.getElementById("statusDot");
+          this.statusText = document.getElementById("statusText");
+          this.documentContent = document.getElementById("documentContent");
+          this.audioLevelBar = document.getElementById("audioLevelBar");
+
+          this.dictationBtn.addEventListener("click", () =>
+            this.toggleDictation()
+          );
+          this.documentContent.addEventListener("input", () =>
+            this.updateWordCount()
+          );
+        }
+
+        initializeSocket() {
+          this.socket.on("connect", () => {
+            console.log("Connected to enhanced backend");
+            this.updateStatus("Connected", "ready");
+          });
+
+          this.socket.on("transcription_result", (result) => {
+            this.handleTranscriptionResult(result);
+          });
+
+          this.socket.on("command_result", (result) => {
+            this.handleCommandResult(result);
+          });
+        }
+
+        initializeWebSpeechAPI() {
+          if (
+            !("webkitSpeechRecognition" in window) &&
+            !("SpeechRecognition" in window)
+          ) {
+            console.warn(
+              "Web Speech API not supported, falling back to audio streaming"
+            );
+            return;
+          }
+
+          const SpeechRecognition =
+            window.SpeechRecognition || window.webkitSpeechRecognition;
+          this.recognition = new SpeechRecognition();
+
+          this.recognition.continuous = true;
+          this.recognition.interimResults = true;
+          this.recognition.lang = "en-GB";
+
+          this.recognition.onstart = () => {
+            console.log("Speech recognition started");
+          };
+
+          this.recognition.onresult = (event) => {
+            this.handleSpeechResult(event);
+          };
+
+          this.recognition.onerror = (event) => {
+            console.error("Speech recognition error:", event.error);
+            if (event.error === "network") {
+              this.fallbackToAudioStreaming();
+            }
+          };
+
+          this.recognition.onend = () => {
+            if (this.isListening) {
+              // Restart if we're still supposed to be listening
+              setTimeout(() => this.recognition.start(), 100);
+            }
+          };
+        }
+
+        async toggleDictation() {
+          if (this.isListening) {
+            this.stopDictation();
+          } else {
+            await this.startDictation();
+          }
+        }
+
+        async startDictation() {
+          try {
+            this.isListening = true;
+            this.sessionStartTime = Date.now();
+
+            this.updateStatus("Starting...", "processing");
+            this.dictationBtn.textContent = "⏸️ Stop Dictation";
+            this.dictationBtn.classList.add("listening");
+
+            // Start audio level monitoring
+            await this.startAudioMonitoring();
+
+            // Try Web Speech API first, fallback to audio streaming
+            if (this.recognition) {
+              this.recognition.start();
+              this.updateStatus("Listening", "listening");
+            } else {
+              await this.fallbackToAudioStreaming();
+            }
+          } catch (error) {
+            console.error("Error starting dictation:", error);
+            this.stopDictation();
+            alert(
+              "Could not start dictation. Please check microphone permissions."
+            );
+          }
+        }
+
+        stopDictation() {
+          this.isListening = false;
+
+          if (this.recognition) {
+            this.recognition.stop();
+          }
+
+          if (this.mediaStream) {
+            this.mediaStream.getTracks().forEach((track) => track.stop());
+            this.mediaStream = null;
+          }
+
+          if (this.audioContext) {
+            this.audioContext.close();
+            this.audioContext = null;
+          }
+
+          this.updateStatus("Ready", "ready");
+          this.dictationBtn.textContent = "🎤 Start Dictation";
+          this.dictationBtn.classList.remove("listening", "processing");
+          this.audioLevelBar.style.width = "0%";
+        }
+
+        async startAudioMonitoring() {
+          try {
+            this.mediaStream = await navigator.mediaDevices.getUserMedia({
+              audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+              },
+            });
+
+            this.audioContext = new (window.AudioContext ||
+              window.webkitAudioContext)();
+            const source = this.audioContext.createMediaStreamSource(
+              this.mediaStream
+            );
+            const analyser = this.audioContext.createAnalyser();
+
+            analyser.fftSize = 256;
+            source.connect(analyser);
+
+            const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+            const updateAudioLevel = () => {
+              if (!this.isListening) return;
+
+              analyser.getByteFrequencyData(dataArray);
+              const average =
+                dataArray.reduce((sum, value) => sum + value, 0) /
+                dataArray.length;
+              const percentage = Math.min(100, (average / 255) * 100);
+
+              this.audioLevelBar.style.width = percentage + "%";
+              requestAnimationFrame(updateAudioLevel);
+            };
+
+            updateAudioLevel();
+          } catch (error) {
+            console.error("Error setting up audio monitoring:", error);
+          }
+        }
+
+        handleSpeechResult(event) {
+          let interimTranscript = "";
+          let finalTranscript = "";
+
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            const transcript = event.results[i][0].transcript;
+
+            if (event.results[i].isFinal) {
+              finalTranscript += transcript;
+            } else {
+              interimTranscript += transcript;
+            }
+          }
+
+          // Show interim results in real-time
+          if (interimTranscript) {
+            this.showInterimText(interimTranscript);
+          }
+
+          // Process final results
+          if (finalTranscript) {
+            this.processFinalText(finalTranscript.trim());
+          }
+        }
+
+        showInterimText(text) {
+          // Remove any existing interim text
+          const existingInterim =
+            this.documentContent.querySelector(".real-time-text");
+          if (existingInterim) {
+            existingInterim.remove();
+          }
+
+          // Add new interim text
+          if (text.trim()) {
+            const interimSpan = document.createElement("span");
+            interimSpan.className = "real-time-text";
+            interimSpan.textContent = text;
+            this.documentContent.appendChild(interimSpan);
+
+            // Scroll to show the new text
+            interimSpan.scrollIntoView({ behavior: "smooth" });
+          }
+        }
+
+        async processFinalText(text) {
+          // Remove interim text
+          const existingInterim =
+            this.documentContent.querySelector(".real-time-text");
+          if (existingInterim) {
+            existingInterim.remove();
+          }
+
+          // Send to backend for enhancement
+          this.updateStatus("Processing...", "processing");
+
+          try {
+            // Send text to backend for medical enhancement
+            const response = await fetch("/process_text", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ text: text }),
+            });
+
+            const result = await response.json();
+            this.handleEnhancedText(result);
+          } catch (error) {
+            console.error("Error processing text:", error);
+            // Fallback to direct insertion
+            this.insertText(text);
+          }
+
+          this.updateStatus("Listening", "listening");
+        }
+
+        handleEnhancedText(result) {
+          if (result.commands && result.commands.length > 0) {
+            this.handleCommands(result.commands);
+            this.sessionStats.commands += result.commands.length;
+          } else {
+            this.insertEnhancedText(result.processed_text, result.enhancements);
+
+            if (result.enhancements && result.enhancements.length > 0) {
+              this.sessionStats.corrections += result.enhancements.length;
+              this.showEnhancements(result.enhancements);
+            }
+          }
+
+          this.updateSessionStats();
+        }
+
+        insertEnhancedText(text, enhancements = []) {
+          const textNode = document.createTextNode(text + " ");
+
+          if (enhancements && enhancements.length > 0) {
+            const enhancedSpan = document.createElement("span");
+            enhancedSpan.className = "enhanced-text";
+            enhancedSpan.textContent = text + " ";
+            enhancedSpan.title = "Enhanced: " + enhancements.join(", ");
+            this.documentContent.appendChild(enhancedSpan);
+          } else {
+            this.documentContent.appendChild(textNode);
+          }
+
+          // Scroll to new content
+          this.documentContent.scrollTop = this.documentContent.scrollHeight;
+          this.updateWordCount();
+        }
+
+        insertText(text) {
+          const textNode = document.createTextNode(text + " ");
+          this.documentContent.appendChild(textNode);
+          this.documentContent.scrollTop = this.documentContent.scrollHeight;
+          this.updateWordCount();
+        }
+
+        handleCommands(commands) {
+          commands.forEach((command) => {
+            this.showCommandFeedback(command.action);
+            this.executeCommand(command);
+          });
+        }
+
+        showCommandFeedback(action) {
+          const feedback = document.createElement("div");
+          feedback.className = "command-feedback";
+          feedback.textContent = `Command: ${action}`;
+          document.body.appendChild(feedback);
+
+          setTimeout(() => {
+            feedback.remove();
+          }, 2000);
+        }
+
+        executeCommand(command) {
+          // Implement command execution based on your command processor
+          switch (command.action) {
+            case "paragraph_break":
+              this.insertText("\n\n");
+              break;
+            case "line_break":
+              this.insertText("\n");
+              break;
+            case "bold":
+              // Implement text formatting
+              break;
+            // Add more command implementations
+          }
+        }
+
+        showEnhancements(enhancements) {
+          const container = document.getElementById("recentEnhancements");
+          container.innerHTML = "";
+
+          enhancements.slice(0, 5).forEach((enhancement) => {
+            const item = document.createElement("div");
+            item.style.cssText =
+              "padding: 5px; margin: 2px 0; background: #e3f2fd; border-radius: 3px; font-size: 12px;";
+            item.textContent = enhancement;
+            container.appendChild(item);
+          });
+        }
+
+        updateStatus(text, type) {
+          this.statusText.textContent = text;
+          this.statusDot.className = `status-dot ${type}`;
+        }
+
+        updateWordCount() {
+          const text = this.documentContent.textContent || "";
+          const words = text.trim().split(/\s+/).length;
+          this.sessionStats.words = words;
+          document.getElementById("wordsCount").textContent = words;
+        }
+
+        updateSessionStats() {
+          document.getElementById("commandsCount").textContent =
+            this.sessionStats.commands;
+          document.getElementById("correctionsCount").textContent =
+            this.sessionStats.corrections;
+        }
+
+        startSessionTimer() {
+          setInterval(() => {
+            if (this.sessionStartTime) {
+              const elapsed = Date.now() - this.sessionStartTime;
+              const minutes = Math.floor(elapsed / 60000);
+              const seconds = Math.floor((elapsed % 60000) / 1000);
+              document.getElementById("sessionTime").textContent = `${minutes
+                .toString()
+                .padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+            }
+          }, 1000);
+        }
+
+        async fallbackToAudioStreaming() {
+          // Implement audio streaming to backend as fallback
+          console.log("Using audio streaming fallback");
+          this.updateStatus("Listening (Streaming)", "listening");
+          // Your existing audio streaming code here
+        }
+      }
+
+      // Initialize the Dragon-style dictation system
+      document.addEventListener("DOMContentLoaded", () => {
+        new DragonStyleDictation();
+      });
+    </script>
+  </body>
+</html>

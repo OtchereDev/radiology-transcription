@@ -1,0 +1,31 @@
+{
+  "common_medical": {
+    "bp": "blood pressure",
+    "hr": "heart rate",
+    "rr": "respiratory rate",
+    "temp": "temperature",
+    "o2": "oxygen",
+    "co2": "carbon dioxide"
+  },
+  "imaging": {
+    "ct": "computed tomography",
+    "mri": "magnetic resonance imaging",
+    "us": "ultrasound",
+    "cta": "computed tomography angiography",
+    "mra": "magnetic resonance angiography",
+    "pet": "positron emission tomography"
+  },
+  "anatomy": {
+    "gi": "gastrointestinal",
+    "gu": "genitourinary",
+    "cns": "central nervous system",
+    "cvs": "cardiovascular system"
+  },
+  "clinical": {
+    "dx": "diagnosis",
+    "rx": "prescription",
+    "hx": "history",
+    "sx": "symptoms",
+    "pt": "patient"
+  }
+}

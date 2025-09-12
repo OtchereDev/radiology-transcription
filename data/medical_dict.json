@@ -1,0 +1,64 @@
+{
+  "medical_terms": {
+    "cardiovascular": [
+      "myocardial infarction",
+      "coronary artery disease",
+      "atrial fibrillation",
+      "ventricular tachycardia",
+      "heart failure",
+      "cardiomyopathy",
+      "pericarditis",
+      "endocarditis"
+    ],
+    "pulmonary": [
+      "pneumonia",
+      "pulmonary embolism",
+      "chronic obstructive pulmonary disease",
+      "asthma",
+      "pneumothorax",
+      "pleural effusion",
+      "pulmonary edema",
+      "respiratory failure"
+    ],
+    "gastrointestinal": [
+      "gastroesophageal reflux disease",
+      "inflammatory bowel disease",
+      "peptic ulcer disease",
+      "cirrhosis",
+      "hepatitis",
+      "pancreatitis",
+      "cholecystitis",
+      "appendicitis"
+    ],
+    "neurological": [
+      "cerebrovascular accident",
+      "transient ischemic attack",
+      "seizure disorder",
+      "multiple sclerosis",
+      "parkinson disease",
+      "alzheimer disease",
+      "migraine",
+      "neuropathy"
+    ]
+  },
+  "medications": [
+    "acetaminophen",
+    "ibuprofen",
+    "aspirin",
+    "metformin",
+    "lisinopril",
+    "amlodipine",
+    "atorvastatin",
+    "omeprazole"
+  ],
+  "procedures": [
+    "computed tomography",
+    "magnetic resonance imaging",
+    "ultrasound",
+    "x-ray",
+    "echocardiogram",
+    "electrocardiogram",
+    "endoscopy",
+    "bronchoscopy"
+  ]
+}

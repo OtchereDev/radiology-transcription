@@ -1,0 +1,35 @@
+{
+  "ct_findings": [
+    "ground glass opacities",
+    "consolidation",
+    "tree-in-bud pattern",
+    "honeycombing",
+    "traction bronchiectasis",
+    "mediastinal lymphadenopathy",
+    "pulmonary nodule",
+    "pulmonary mass"
+  ],
+  "mri_sequences": [
+    "t1 weighted imaging",
+    "t2 weighted imaging",
+    "fluid attenuated inversion recovery",
+    "diffusion weighted imaging",
+    "gradient echo",
+    "susceptibility weighted imaging"
+  ],
+  "contrast_phases": [
+    "arterial phase",
+    "portal venous phase",
+    "delayed phase",
+    "equilibrium phase",
+    "nephrographic phase",
+    "excretory phase"
+  ],
+  "measurements": [
+    "hounsfield units",
+    "apparent diffusion coefficient",
+    "standardized uptake value",
+    "resistive index",
+    "pulsatility index"
+  ]
+}
