@@ -32,12 +32,13 @@ RUN mkdir -p /app/logs /app/data /app/temp
 # Copy source code after dependencies
 COPY . .
 
-# ✅ Create non-root user before chown
-RUN useradd -m -u 1000 appuser && \
-    chown -R appuser:appuser /app && \
+RUN mkdir -p /app/logs /app/data /app/temp /home/appuser/.cache && \
+    chown -R appuser:appuser /app /home/appuser && \
     chmod -R 755 /app/logs /app/data /app/temp
 
+# Switch to non-root user
 USER appuser
+
 
 EXPOSE 5000
 
