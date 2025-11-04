@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Streaming Medical Dictation</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      }
+
+      body {
+        background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+        min-height: 100vh;
+        padding: 20px;
+      }
+
+      .container {
+        max-width: 1400px;
+        margin: 0 auto;
+        background: white;
+        border-radius: 15px;
+        overflow: hidden;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+      }
+
+      .header {
+        background: #1e3c72;
+        color: white;
+        padding: 20px;
+        text-align: center;
+      }
+
+      .header h1 {
+        margin-bottom: 5px;
+      }
+
+      .header .subtitle {
+        opacity: 0.9;
+        font-size: 14px;
+      }
+
+      .controls {
+        padding: 20px;
+        background: #f8f9fa;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 20px;
+        border-bottom: 1px solid #e9ecef;
+      }
+
+      .btn {
+        padding: 15px 30px;
+        border: none;
+        border-radius: 50px;
+        font-size: 16px;
+        font-weight: bold;
+        cursor: pointer;
+        transition: all 0.3s ease;
+      }
+
+      .btn-primary {
+        background: #28a745;
+        color: white;
+      }
+
+      .btn-danger {
+        background: #dc3545;
+        color: white;
+      }
+
+      .btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+      }
+
+      .btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+        transform: none;
+      }
+
+      .status {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .status-dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: #6c757d;
+      }
+
+      .status-dot.active {
+        background: #28a745;
+        animation: pulse 2s infinite;
+      }
+
+      .status-dot.processing {
+        background: #ffc107;
+        animation: spin 1s linear infinite;
+      }
+
+      @keyframes pulse {
+        0%,
+        100% {
+          transform: scale(1);
+          opacity: 1;
+        }
+        50% {
+          transform: scale(1.2);
+          opacity: 0.7;
+        }
+      }
+
+      @keyframes spin {
+        from {
+          transform: rotate(0deg);
+        }
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      .main-content {
+        display: grid;
+        grid-template-columns: 250px 1fr 250px;
+        gap: 0;
+        min-height: 500px;
+      }
+
+      .sidebar {
+        background: #f8f9fa;
+        padding: 20px;
+        border-right: 1px solid #e9ecef;
+      }
+
+      .sidebar h3 {
+        color: #1e3c72;
+        margin-bottom: 15px;
+        font-size: 16px;
+      }
+
+      .stat-item {
+        padding: 8px 0;
+        border-bottom: 1px solid #e9ecef;
+        display: flex;
+        justify-content: space-between;
+      }
+
+      .stat-value {
+        font-weight: bold;
+        color: #28a745;
+      }
+
+      .document-area {
+        padding: 30px;
+        background: white;
+        overflow-y: auto;
+      }
+
+      .document-content {
+        min-height: 400px;
+        line-height: 1.8;
+        font-size: 16px;
+        color: #333;
+        white-space: pre-wrap;
+      }
+
+      .document-content:empty:before {
+        content: "Start speaking to begin transcription...";
+        color: #adb5bd;
+        font-style: italic;
+      }
+
+      .transcription-segment {
+        margin-bottom: 10px;
+        padding: 5px;
+        border-radius: 3px;
+        animation: fadeIn 0.3s ease;
+      }
+
+      .transcription-segment.enhanced {
+        background: rgba(40, 167, 69, 0.1);
+        border-left: 3px solid #28a745;
+        padding-left: 8px;
+      }
+
+      @keyframes fadeIn {
+        from {
+          opacity: 0;
+          transform: translateY(-10px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      .processing-indicator {
+        color: #ffc107;
+        font-style: italic;
+        padding: 5px 0;
+        display: none;
+      }
+
+      .processing-indicator.visible {
+        display: block;
+        animation: blink 1.5s infinite;
+      }
+
+      @keyframes blink {
+        0%,
+        50%,
+        100% {
+          opacity: 1;
+        }
+        25%,
+        75% {
+          opacity: 0.5;
+        }
+      }
+
+      .latency-indicator {
+        font-size: 12px;
+        color: #6c757d;
+        margin-top: 10px;
+      }
+
+      .latency-good {
+        color: #28a745;
+      }
+      .latency-medium {
+        color: #ffc107;
+      }
+      .latency-bad {
+        color: #dc3545;
+      }
+
+      @media (max-width: 1000px) {
+        .main-content {
+          grid-template-columns: 1fr;
+        }
+        .sidebar {
+          border-right: none;
+          border-bottom: 1px solid #e9ecef;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1>🎤 Streaming Medical Dictation</h1>
+        <p class="subtitle">
+          Faster-Whisper + Silero VAD • Real-time transcription
+        </p>
+      </div>
+
+      <div class="controls">
+        <button id="startBtn" class="btn btn-primary">Start Streaming</button>
+        <button id="stopBtn" class="btn btn-danger" disabled>
+          Stop Streaming
+        </button>
+
+        <div class="status">
+          <div class="status-dot" id="statusDot"></div>
+          <span id="statusText">Ready</span>
+        </div>
+      </div>
+
+      <div class="main-content">
+        <!-- Left Sidebar: Stats -->
+        <div class="sidebar">
+          <h3>📊 Session Stats</h3>
+          <div class="stat-item">
+            <span>Words:</span>
+            <span class="stat-value" id="wordCount">0</span>
+          </div>
+          <div class="stat-item">
+            <span>Segments:</span>
+            <span class="stat-value" id="segmentCount">0</span>
+          </div>
+          <div class="stat-item">
+            <span>Enhanced:</span>
+            <span class="stat-value" id="enhancedCount">0</span>
+          </div>
+          <div class="stat-item">
+            <span>Duration:</span>
+            <span class="stat-value" id="sessionDuration">00:00</span>
+          </div>
+
+          <h3 style="margin-top: 20px">⚡ Performance</h3>
+          <div class="latency-indicator" id="latencyIndicator">
+            Latency: <span id="latencyValue">-</span>
+          </div>
+          <div class="latency-indicator">RTF: <span id="rtfValue">-</span></div>
+        </div>
+
+        <!-- Center: Document -->
+        <div class="document-area">
+          <div class="processing-indicator" id="processingIndicator">
+            🎤 Processing speech...
+          </div>
+          <div id="documentContent" class="document-content"></div>
+        </div>
+
+        <!-- Right Sidebar: Info -->
+        <div class="sidebar">
+          <h3>ℹ️ System Info</h3>
+          <div class="stat-item">
+            <span>GPU:</span>
+            <span class="stat-value" id="gpuStatus">-</span>
+          </div>
+          <div class="stat-item">
+            <span>Model:</span>
+            <span class="stat-value">large-v3</span>
+          </div>
+          <div class="stat-item">
+            <span>VAD:</span>
+            <span class="stat-value">Silero</span>
+          </div>
+
+          <h3 style="margin-top: 20px">💡 Tips</h3>
+          <div style="font-size: 13px; line-height: 1.6; color: #6c757d">
+            <p>• Speak naturally with normal pauses</p>
+            <p>• System detects end of speech automatically</p>
+            <p>• ~1-2 second latency for transcription</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // State
+      let socket = null;
+      let isStreaming = false;
+      let mediaRecorder = null;
+      let audioStream = null;
+      let sessionStartTime = null;
+      let stats = {
+        words: 0,
+        segments: 0,
+        enhanced: 0,
+      };
+
+      // DOM elements
+      const startBtn = document.getElementById("startBtn");
+      const stopBtn = document.getElementById("stopBtn");
+      const statusDot = document.getElementById("statusDot");
+      const statusText = document.getElementById("statusText");
+      const documentContent = document.getElementById("documentContent");
+      const processingIndicator = document.getElementById(
+        "processingIndicator"
+      );
+
+      // Initialize
+      document.addEventListener("DOMContentLoaded", () => {
+        initializeSocket();
+        setupEventListeners();
+      });
+
+      function initializeSocket() {
+        socket = io();
+
+        socket.on("connect", () => {
+          console.log("Connected to server");
+          updateStatus("Connected", "ready");
+          document.getElementById("gpuStatus").textContent = "Checking...";
+        });
+
+        socket.on("status", (data) => {
+          console.log("Status:", data);
+          document.getElementById("gpuStatus").textContent =
+            data.gpu_accelerated ? "Available ✓" : "CPU";
+        });
+
+        socket.on("streaming_started", (data) => {
+          console.log("Streaming started:", data);
+          isStreaming = true;
+          sessionStartTime = Date.now();
+          updateStatus("Streaming", "active");
+        });
+
+        socket.on("streaming_stopped", (data) => {
+          console.log("Streaming stopped:", data);
+          stopStreaming();
+        });
+
+        socket.on("transcription_result", (result) => {
+          handleTranscription(result);
+        });
+
+        socket.on("transcription_error", (error) => {
+          console.error("Transcription error:", error);
+          hideProcessing();
+        });
+
+        socket.on("streaming_error", (error) => {
+          console.error("Streaming error:", error);
+          alert("Streaming error: " + error.error);
+          stopStreaming();
+        });
+
+        socket.on("disconnect", () => {
+          console.log("Disconnected from server");
+          updateStatus("Disconnected", "ready");
+          stopStreaming();
+        });
+      }
+
+      function setupEventListeners() {
+        startBtn.addEventListener("click", startStreaming);
+        stopBtn.addEventListener("click", stopStreaming);
+      }
+
+      async function startStreaming() {
+        try {
+          console.log("Starting streaming...");
+
+          // Get microphone access
+          audioStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              sampleRate: 16000,
+              channelCount: 1,
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+            },
+          });
+
+          // Setup MediaRecorder for audio chunks
+          const mimeType = MediaRecorder.isTypeSupported(
+            "audio/webm;codecs=opus"
+          )
+            ? "audio/webm;codecs=opus"
+            : "audio/webm";
+
+          mediaRecorder = new MediaRecorder(audioStream, {
+            mimeType: mimeType,
+            audioBitsPerSecond: 128000,
+          });
+
+          mediaRecorder.ondataavailable = (event) => {
+            if (event.data.size > 0 && isStreaming) {
+              sendAudioChunk(event.data);
+            }
+          };
+
+          // Start recording - send chunks every 100ms
+          mediaRecorder.start(100);
+
+          // Tell server to start streaming session
+          socket.emit("start_streaming");
+
+          // Update UI
+          startBtn.disabled = true;
+          stopBtn.disabled = false;
+
+          // Start session timer
+          startSessionTimer();
+        } catch (error) {
+          console.error("Error starting streaming:", error);
+          alert("Could not start streaming: " + error.message);
+        }
+      }
+
+      function stopStreaming() {
+        console.log("Stopping streaming...");
+
+        isStreaming = false;
+
+        if (mediaRecorder && mediaRecorder.state !== "inactive") {
+          mediaRecorder.stop();
+        }
+
+        if (audioStream) {
+          audioStream.getTracks().forEach((track) => track.stop());
+          audioStream = null;
+        }
+
+        // Tell server
+        socket.emit("stop_streaming");
+
+        // Update UI
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+        updateStatus("Ready", "ready");
+        hideProcessing();
+      }
+
+      async function sendAudioChunk(blob) {
+        try {
+          // Convert blob to base64
+          const base64 = await blobToBase64(blob);
+          const base64Data = base64.split(",")[1];
+
+          // Send to server
+          socket.emit("audio_chunk", {
+            audio: base64Data,
+          });
+        } catch (error) {
+          console.error("Error sending audio chunk:", error);
+        }
+      }
+
+      function handleTranscription(result) {
+        console.log("Transcription result:", result);
+
+        hideProcessing();
+
+        if (!result.success) {
+          console.error("Transcription failed:", result.error);
+          return;
+        }
+
+        const text = result.processed_text || result.text;
+        if (!text || !text.trim()) {
+          return;
+        }
+
+        // Show processing for a moment
+        showProcessing();
+        setTimeout(hideProcessing, 500);
+
+        // Add to document
+        const segment = document.createElement("div");
+        segment.className = "transcription-segment";
+
+        if (result.enhancements && result.enhancements.length > 0) {
+          segment.classList.add("enhanced");
+          stats.enhanced += result.enhancements.length;
+        }
+
+        segment.textContent = text + " ";
+        documentContent.appendChild(segment);
+
+        // Scroll to show new text
+        segment.scrollIntoView({ behavior: "smooth", block: "nearest" });
+
+        // Update stats
+        stats.segments++;
+        updateWordCount();
+        updateLatency(result);
+        updateStatDisplay();
+      }
+
+      function showProcessing() {
+        processingIndicator.classList.add("visible");
+        statusDot.classList.add("processing");
+      }
+
+      function hideProcessing() {
+        processingIndicator.classList.remove("visible");
+        statusDot.classList.remove("processing");
+      }
+
+      function updateStatus(text, type) {
+        statusText.textContent = text;
+        statusDot.className = "status-dot";
+        if (type) {
+          statusDot.classList.add(type);
+        }
+      }
+
+      function updateWordCount() {
+        const text = documentContent.textContent || "";
+        stats.words = text
+          .trim()
+          .split(/\s+/)
+          .filter((w) => w.length > 0).length;
+      }
+
+      function updateLatency(result) {
+        if (result.processing_time) {
+          const latency = (result.processing_time * 1000).toFixed(0);
+          const latencyEl = document.getElementById("latencyValue");
+          latencyEl.textContent = latency + "ms";
+
+          // Color code
+          latencyEl.className = "";
+          if (latency < 1000) {
+            latencyEl.classList.add("latency-good");
+          } else if (latency < 2000) {
+            latencyEl.classList.add("latency-medium");
+          } else {
+            latencyEl.classList.add("latency-bad");
+          }
+        }
+
+        if (result.rtf) {
+          document.getElementById("rtfValue").textContent =
+            result.rtf.toFixed(3) + "x";
+        }
+      }
+
+      function updateStatDisplay() {
+        document.getElementById("wordCount").textContent = stats.words;
+        document.getElementById("segmentCount").textContent = stats.segments;
+        document.getElementById("enhancedCount").textContent = stats.enhanced;
+      }
+
+      function startSessionTimer() {
+        setInterval(() => {
+          if (sessionStartTime) {
+            const elapsed = Date.now() - sessionStartTime;
+            const minutes = Math.floor(elapsed / 60000);
+            const seconds = Math.floor((elapsed % 60000) / 1000);
+            document.getElementById("sessionDuration").textContent = `${minutes
+              .toString()
+              .padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+          }
+        }, 1000);
+      }
+
+      function blobToBase64(blob) {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+      }
+    </script>
+  </body>
+</html>
