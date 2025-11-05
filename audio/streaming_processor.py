@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Streaming Audio Processor with VAD
-Handles real-time audio buffering and voice activity detection
+FIXED: Streaming Audio Processor with VAD
+Added minimum chunk size validation to prevent "audio chunk too short" errors
 """
 
 import numpy as np
@@ -26,6 +26,9 @@ class AudioChunk:
 
 class SileroVAD:
     """Silero Voice Activity Detection"""
+    
+    # MINIMUM CHUNK SIZE FOR SILERO VAD
+    MIN_CHUNK_SIZE = 512  # samples (32ms at 16kHz)
     
     def __init__(self, 
                  threshold: float = 0.5,
@@ -81,6 +84,16 @@ class SileroVAD:
         Returns:
             Dict with speech detection info
         """
+        # CRITICAL FIX: Validate and pad chunk size if needed
+        if len(audio_chunk) < self.MIN_CHUNK_SIZE:
+            logger.warning(f"Chunk size {len(audio_chunk)} < minimum {self.MIN_CHUNK_SIZE}, padding")
+            audio_chunk = np.pad(
+                audio_chunk, 
+                (0, self.MIN_CHUNK_SIZE - len(audio_chunk)), 
+                mode='constant',
+                constant_values=0
+            )
+        
         # Convert to torch tensor
         if isinstance(audio_chunk, np.ndarray):
             audio_tensor = torch.from_numpy(audio_chunk).float()
@@ -88,7 +101,17 @@ class SileroVAD:
             audio_tensor = audio_chunk
         
         # Get speech probability
-        speech_prob = self.model(audio_tensor, self.sampling_rate).item()
+        try:
+            speech_prob = self.model(audio_tensor, self.sampling_rate).item()
+        except Exception as e:
+            logger.error(f"VAD processing error: {e}, chunk shape: {audio_chunk.shape}")
+            # Return neutral result on error
+            return {
+                'is_speech': False,
+                'speech_prob': 0.0,
+                'timestamp': time.time(),
+                'error': str(e)
+            }
         
         is_speech = speech_prob > self.threshold
         
@@ -108,16 +131,25 @@ class SileroVAD:
         Returns:
             List of speech segments with start/end timestamps
         """
+        # Validate minimum size
+        if len(audio) < self.MIN_CHUNK_SIZE:
+            logger.warning(f"Audio buffer too short for VAD: {len(audio)} samples")
+            return []
+        
         audio_tensor = torch.from_numpy(audio).float()
         
-        speech_timestamps = self.get_speech_timestamps(
-            audio_tensor,
-            self.model,
-            sampling_rate=self.sampling_rate,
-            threshold=self.threshold,
-            min_speech_duration_ms=self.min_speech_duration_ms,
-            min_silence_duration_ms=self.min_silence_duration_ms
-        )
+        try:
+            speech_timestamps = self.get_speech_timestamps(
+                audio_tensor,
+                self.model,
+                sampling_rate=self.sampling_rate,
+                threshold=self.threshold,
+                min_speech_duration_ms=self.min_speech_duration_ms,
+                min_silence_duration_ms=self.min_silence_duration_ms
+            )
+        except Exception as e:
+            logger.error(f"Speech segmentation error: {e}")
+            return []
         
         return speech_timestamps
 
@@ -302,7 +334,8 @@ class StreamingAudioProcessor:
         self.processing_stats = {
             'segments_processed': 0,
             'total_processing_time': 0,
-            'avg_processing_time': 0
+            'avg_processing_time': 0,
+            'vad_errors': 0
         }
         
         logger.info("StreamingAudioProcessor initialized")
@@ -315,8 +348,26 @@ class StreamingAudioProcessor:
             audio_data: Audio chunk as numpy array
         """
         try:
+            # Validate audio data
+            if len(audio_data) == 0:
+                logger.warning("Empty audio chunk received, skipping")
+                return
+            
+            # Ensure minimum size for VAD
+            min_size = SileroVAD.MIN_CHUNK_SIZE
+            if len(audio_data) < min_size:
+                logger.debug(f"Padding audio chunk from {len(audio_data)} to {min_size} samples")
+                audio_data = np.pad(audio_data, (0, min_size - len(audio_data)), mode='constant')
+            
             # Detect speech in chunk
             vad_result = self.vad.process_chunk(audio_data)
+            
+            if 'error' in vad_result:
+                self.processing_stats['vad_errors'] += 1
+                logger.warning(f"VAD error count: {self.processing_stats['vad_errors']}")
+                # Skip this chunk but continue processing
+                return
+            
             is_speech = vad_result['is_speech']
             
             # Add to buffer
@@ -324,6 +375,11 @@ class StreamingAudioProcessor:
             
             # If segment is ready, trigger callback
             if ready_segment is not None:
+                # Additional validation before transcription
+                if len(ready_segment) < min_size:
+                    logger.warning(f"Segment too short for transcription: {len(ready_segment)} samples")
+                    return
+                
                 start_time = time.time()
                 
                 # Call transcription callback
@@ -339,13 +395,13 @@ class StreamingAudioProcessor:
                 )
                 
         except Exception as e:
-            logger.error(f"Error processing audio chunk: {e}")
-            raise
+            logger.error(f"Error processing audio chunk: {e}", exc_info=True)
+            # Don't raise - allow processing to continue
     
     def finalize(self):
         """Process any remaining audio in buffer"""
         remaining = self.buffer.get_remaining_audio()
-        if remaining is not None:
+        if remaining is not None and len(remaining) >= SileroVAD.MIN_CHUNK_SIZE:
             self.on_segment_ready(remaining, self.sample_rate)
     
     def reset(self):
