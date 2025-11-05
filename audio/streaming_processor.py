@@ -84,15 +84,20 @@ class SileroVAD:
         Returns:
             Dict with speech detection info
         """
-        # CRITICAL FIX: Validate and pad chunk size if needed
-        if len(audio_chunk) < self.MIN_CHUNK_SIZE:
-            logger.warning(f"Chunk size {len(audio_chunk)} < minimum {self.MIN_CHUNK_SIZE}, padding")
+        # CRITICAL: Silero VAD requires EXACTLY 512 samples at 16kHz, not just minimum
+        REQUIRED_SIZE = 512
+        
+        # Pad if too small
+        if len(audio_chunk) < REQUIRED_SIZE:
             audio_chunk = np.pad(
                 audio_chunk, 
-                (0, self.MIN_CHUNK_SIZE - len(audio_chunk)), 
+                (0, REQUIRED_SIZE - len(audio_chunk)), 
                 mode='constant',
                 constant_values=0
             )
+        # Trim if too large - CRITICAL FIX
+        elif len(audio_chunk) > REQUIRED_SIZE:
+            audio_chunk = audio_chunk[:REQUIRED_SIZE]
         
         # Convert to torch tensor
         if isinstance(audio_chunk, np.ndarray):
@@ -353,13 +358,7 @@ class StreamingAudioProcessor:
                 logger.warning("Empty audio chunk received, skipping")
                 return
             
-            # Ensure minimum size for VAD
-            min_size = SileroVAD.MIN_CHUNK_SIZE
-            if len(audio_data) < min_size:
-                logger.debug(f"Padding audio chunk from {len(audio_data)} to {min_size} samples")
-                audio_data = np.pad(audio_data, (0, min_size - len(audio_data)), mode='constant')
-            
-            # Detect speech in chunk
+            # VAD will handle padding/trimming to exactly 512 samples internally
             vad_result = self.vad.process_chunk(audio_data)
             
             if 'error' in vad_result:
@@ -370,13 +369,13 @@ class StreamingAudioProcessor:
             
             is_speech = vad_result['is_speech']
             
-            # Add to buffer
+            # Add to buffer (original chunk, not the trimmed/padded one)
             ready_segment = self.buffer.add_chunk(audio_data, is_speech)
             
             # If segment is ready, trigger callback
             if ready_segment is not None:
-                # Additional validation before transcription
-                if len(ready_segment) < min_size:
+                # Validate segment has content
+                if len(ready_segment) < 512:
                     logger.warning(f"Segment too short for transcription: {len(ready_segment)} samples")
                     return
                 
