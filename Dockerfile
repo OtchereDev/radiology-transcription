@@ -26,19 +26,19 @@ COPY requirements.txt .
 RUN python -m pip install --upgrade pip && \
     pip install -r requirements.txt
 
-# Create app directories
-RUN mkdir -p /app/logs /app/data /app/temp
+# Create a non-root user before assigning ownership
+RUN useradd -m -d /home/appuser -s /bin/bash appuser
 
-# Copy source code after dependencies
-COPY . .
-
+# Create app directories and set permissions
 RUN mkdir -p /app/logs /app/data /app/temp /home/appuser/.cache && \
     chown -R appuser:appuser /app /home/appuser && \
     chmod -R 755 /app/logs /app/data /app/temp
 
+# Copy source code after dependencies
+COPY . .
+
 # Switch to non-root user
 USER appuser
-
 
 EXPOSE 5000
 
