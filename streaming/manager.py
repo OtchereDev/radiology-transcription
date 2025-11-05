@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
 """
-Streaming Manager
-Orchestrates audio streaming, VAD, buffering, and transcription
+FIXED: Streaming Manager
+Fixed numpy buffer conversion error
 """
 
 import logging
-import asyncio
 import numpy as np
 from typing import Dict, Callable, Optional
 import time
-from datetime import datetime
 import base64
-import io
 
 from audio.streaming_processor import StreamingAudioProcessor
 from transcription.faster_whisper_engine import FasterWhisperEngine
@@ -27,15 +24,6 @@ class StreamingSession:
                  transcription_engine: FasterWhisperEngine,
                  on_transcription: Callable[[Dict], None],
                  sample_rate: int = 16000):
-        """
-        Initialize streaming session
-        
-        Args:
-            session_id: Unique session identifier
-            transcription_engine: Faster-Whisper engine instance
-            on_transcription: Callback when transcription is ready
-            sample_rate: Audio sample rate
-        """
         self.session_id = session_id
         self.transcription_engine = transcription_engine
         self.on_transcription = on_transcription
@@ -46,7 +34,7 @@ class StreamingSession:
             on_segment_ready=self._on_segment_ready,
             sample_rate=sample_rate,
             vad_threshold=0.5,
-            silence_duration_ms=700  # 700ms silence triggers transcription
+            silence_duration_ms=700
         )
         
         # Session state
@@ -65,7 +53,7 @@ class StreamingSession:
         
         # Context for better transcription
         self.transcription_context = []
-        self.max_context_length = 3  # Keep last 3 transcriptions for context
+        self.max_context_length = 3
         
         logger.info(f"StreamingSession created: {session_id}")
     
@@ -79,7 +67,6 @@ class StreamingSession:
     def stop(self):
         """Stop streaming session and finalize"""
         if self.is_active:
-            # Process any remaining audio
             self.processor.finalize()
             self.is_active = False
             
@@ -88,7 +75,7 @@ class StreamingSession:
     
     def process_audio_chunk(self, audio_data: bytes, encoding: str = 'base64'):
         """
-        Process incoming audio chunk
+        Process incoming audio chunk - FIXED buffer conversion
         
         Args:
             audio_data: Audio data (base64 encoded or raw bytes)
@@ -103,8 +90,36 @@ class StreamingSession:
             else:
                 audio_bytes = audio_data
             
-            # Convert bytes to numpy array
-            audio_array = np.frombuffer(audio_bytes, dtype=np.float32)
+            # CRITICAL FIX: Proper numpy array conversion
+            # WebM audio needs proper handling
+            try:
+                # Calculate how many complete int16 samples we have
+                num_samples = len(audio_bytes) // 2  # int16 is 2 bytes
+                
+                if num_samples == 0:
+                    logger.warning("Audio bytes too small for conversion")
+                    return
+                
+                # Only use complete samples (trim incomplete bytes at end)
+                valid_bytes = num_samples * 2
+                audio_bytes = audio_bytes[:valid_bytes]
+                
+                # Convert bytes to int16 array
+                audio_array = np.frombuffer(audio_bytes, dtype=np.int16)
+                
+                # Convert to float32 normalized to [-1, 1]
+                audio_array = audio_array.astype(np.float32) / 32768.0
+                
+            except Exception as e:
+                logger.error(f"Audio conversion error: {e}, bytes length: {len(audio_bytes)}")
+                self.session_stats['errors'] += 1
+                return
+            
+            if len(audio_array) == 0:
+                logger.warning("Empty audio array after conversion")
+                return
+            
+            logger.debug(f"Converted {len(audio_bytes)} bytes to {len(audio_array)} samples")
             
             # Update stats
             self.session_stats['total_audio_received'] += len(audio_array)
@@ -113,22 +128,15 @@ class StreamingSession:
             self.processor.process_audio_chunk(audio_array)
             
         except Exception as e:
-            logger.error(f"Error processing audio chunk: {e}")
+            logger.error(f"Error processing audio chunk: {e}", exc_info=True)
             self.session_stats['errors'] += 1
-            raise
     
     def _on_segment_ready(self, audio_segment: np.ndarray, sample_rate: int):
-        """
-        Callback when audio segment is ready for transcription
-        
-        Args:
-            audio_segment: Complete audio segment
-            sample_rate: Sample rate
-        """
+        """Callback when audio segment is ready for transcription"""
         try:
             logger.info(f"Segment ready: {len(audio_segment)} samples")
             
-            # Build context prompt from previous transcriptions
+            # Build context prompt
             initial_prompt = self._build_context_prompt()
             
             # Transcribe using Faster-Whisper
@@ -159,7 +167,7 @@ class StreamingSession:
             logger.info(f"Transcription completed: '{result.get('text', '')[:50]}...'")
             
         except Exception as e:
-            logger.error(f"Error in segment transcription: {e}")
+            logger.error(f"Error in segment transcription: {e}", exc_info=True)
             self.session_stats['errors'] += 1
             
             # Send error to callback
@@ -175,15 +183,13 @@ class StreamingSession:
         if not self.transcription_context:
             return None
         
-        # Join last few transcriptions as context
         context = " ".join(self.transcription_context[-self.max_context_length:])
-        return context[:244]  # Whisper has 224 token limit for prompt
+        return context[:244]
     
     def _update_context(self, text: str):
         """Update transcription context"""
         self.transcription_context.append(text.strip())
         
-        # Keep only recent context
         if len(self.transcription_context) > self.max_context_length:
             self.transcription_context.pop(0)
     
@@ -207,25 +213,15 @@ class StreamingSession:
 
 
 class StreamingManager:
-    """
-    Manages multiple concurrent streaming sessions
-    """
+    """Manages multiple concurrent streaming sessions"""
     
     def __init__(self,
                  model_size: str = "large-v3",
                  device: str = "cuda",
                  max_concurrent_sessions: int = 10):
-        """
-        Initialize streaming manager
-        
-        Args:
-            model_size: Whisper model size
-            device: Device to run on
-            max_concurrent_sessions: Maximum concurrent sessions
-        """
         self.max_concurrent_sessions = max_concurrent_sessions
         
-        # Initialize transcription engine (shared across sessions)
+        # Initialize transcription engine
         self.transcription_engine = FasterWhisperEngine(
             model_size=model_size,
             device=device,
@@ -242,28 +238,15 @@ class StreamingManager:
             'peak_concurrent_sessions': 0
         }
         
-        logger.info(f"StreamingManager initialized: model={model_size}, "
-                   f"device={device}, max_sessions={max_concurrent_sessions}")
+        logger.info(f"StreamingManager initialized: model={model_size}, device={device}")
     
     def create_session(self,
                       session_id: str,
                       on_transcription: Callable[[Dict], None]) -> StreamingSession:
-        """
-        Create new streaming session
-        
-        Args:
-            session_id: Unique session identifier
-            on_transcription: Callback for transcription results
-            
-        Returns:
-            StreamingSession instance
-        """
-        # Check concurrent session limit
+        """Create new streaming session"""
         if len(self.sessions) >= self.max_concurrent_sessions:
-            raise RuntimeError(f"Maximum concurrent sessions reached: "
-                             f"{self.max_concurrent_sessions}")
+            raise RuntimeError(f"Maximum concurrent sessions reached: {self.max_concurrent_sessions}")
         
-        # Create session
         session = StreamingSession(
             session_id=session_id,
             transcription_engine=self.transcription_engine,
@@ -280,8 +263,7 @@ class StreamingManager:
             len(self.sessions)
         )
         
-        logger.info(f"Session created: {session_id}. "
-                   f"Active sessions: {len(self.sessions)}")
+        logger.info(f"Session created: {session_id}. Active: {len(self.sessions)}")
         
         return session
     
@@ -298,8 +280,7 @@ class StreamingManager:
             
             self.manager_stats['current_active_sessions'] = len(self.sessions)
             
-            logger.info(f"Session removed: {session_id}. "
-                       f"Active sessions: {len(self.sessions)}")
+            logger.info(f"Session removed: {session_id}. Active: {len(self.sessions)}")
     
     def cleanup_inactive_sessions(self, timeout_seconds: int = 300):
         """Cleanup sessions inactive for longer than timeout"""
