@@ -358,25 +358,57 @@ class StreamingAudioProcessor:
                 logger.warning("Empty audio chunk received, skipping")
                 return
             
-            # VAD will handle padding/trimming to exactly 512 samples internally
-            vad_result = self.vad.process_chunk(audio_data)
+            # Process in 512-sample windows (required by VAD)
+            WINDOW_SIZE = 512
+            
+            # Split audio into 512-sample windows
+            num_windows = len(audio_data) // WINDOW_SIZE
+            
+            if num_windows == 0:
+                # Chunk smaller than window, pad and process
+                vad_result = self.vad.process_chunk(audio_data)
+            else:
+                # Process each window and average the results
+                speech_probs = []
+                for i in range(num_windows):
+                    window = audio_data[i * WINDOW_SIZE : (i + 1) * WINDOW_SIZE]
+                    vad_result = self.vad.process_chunk(window)
+                    
+                    if 'error' not in vad_result:
+                        speech_probs.append(vad_result['speech_prob'])
+                
+                # Average speech probability across windows
+                if speech_probs:
+                    avg_speech_prob = sum(speech_probs) / len(speech_probs)
+                    vad_result = {
+                        'is_speech': avg_speech_prob > self.vad.threshold,
+                        'speech_prob': avg_speech_prob,
+                        'timestamp': time.time()
+                    }
+                else:
+                    # All windows had errors
+                    self.processing_stats['vad_errors'] += 1
+                    return
             
             if 'error' in vad_result:
                 self.processing_stats['vad_errors'] += 1
                 logger.warning(f"VAD error count: {self.processing_stats['vad_errors']}")
-                # Skip this chunk but continue processing
                 return
             
             is_speech = vad_result['is_speech']
             
-            # Add to buffer (original chunk, not the trimmed/padded one)
+            logger.debug(f"Chunk: {len(audio_data)} samples, speech_prob: {vad_result['speech_prob']:.3f}, is_speech: {is_speech}")
+            
+            # Add to buffer (original full chunk)
             ready_segment = self.buffer.add_chunk(audio_data, is_speech)
             
             # If segment is ready, trigger callback
             if ready_segment is not None:
+                logger.info(f"Segment ready for transcription: {len(ready_segment)} samples ({len(ready_segment)/self.sample_rate:.2f}s)")
+                
                 # Validate segment has content
                 if len(ready_segment) < 512:
-                    logger.warning(f"Segment too short for transcription: {len(ready_segment)} samples")
+                    logger.warning(f"Segment too short: {len(ready_segment)} samples")
                     return
                 
                 start_time = time.time()
@@ -395,7 +427,6 @@ class StreamingAudioProcessor:
                 
         except Exception as e:
             logger.error(f"Error processing audio chunk: {e}", exc_info=True)
-            # Don't raise - allow processing to continue
     
     def finalize(self):
         """Process any remaining audio in buffer"""
