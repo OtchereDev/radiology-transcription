@@ -24,59 +24,31 @@ class AudioChunk:
     is_speech: bool = False
 
 
-class SileroVAD:
-    """Silero Voice Activity Detection"""
-    
-    # MINIMUM CHUNK SIZE FOR SILERO VAD
-    MIN_CHUNK_SIZE = 512  # samples (32ms at 16kHz)
+class SimpleVAD:
+    """Simple energy-based Voice Activity Detection for streaming"""
     
     def __init__(self, 
-                 threshold: float = 0.5,
-                 sampling_rate: int = 16000,
-                 min_speech_duration_ms: int = 250,
-                 min_silence_duration_ms: int = 500):
+                 threshold: float = 0.02,
+                 sampling_rate: int = 16000):
         """
-        Initialize Silero VAD
+        Initialize simple VAD
         
         Args:
-            threshold: Speech probability threshold (0-1)
+            threshold: Energy threshold for speech detection
             sampling_rate: Audio sample rate
-            min_speech_duration_ms: Minimum speech duration to consider
-            min_silence_duration_ms: Minimum silence to trigger end of speech
         """
         self.threshold = threshold
         self.sampling_rate = sampling_rate
-        self.min_speech_duration_ms = min_speech_duration_ms
-        self.min_silence_duration_ms = min_silence_duration_ms
         
-        # Load Silero VAD model
-        try:
-            self.model, utils = torch.hub.load(
-                repo_or_dir='snakers4/silero-vad',
-                model='silero_vad',
-                force_reload=False,
-                onnx=False
-            )
-            
-            self.get_speech_timestamps = utils[0]
-            logger.info("Silero VAD model loaded successfully")
-            
-        except Exception as e:
-            logger.error(f"Failed to load Silero VAD: {e}")
-            raise
-        
-        # State tracking
-        self.reset()
+        logger.info(f"SimpleVAD initialized with threshold={threshold}")
     
     def reset(self):
         """Reset VAD state"""
-        self.triggered = False
-        self.temp_end = 0
-        self.current_speech_start = None
+        pass
     
     def process_chunk(self, audio_chunk: np.ndarray) -> Dict:
         """
-        Process audio chunk and detect speech
+        Process audio chunk and detect speech using energy
         
         Args:
             audio_chunk: Audio data as numpy array
@@ -84,79 +56,17 @@ class SileroVAD:
         Returns:
             Dict with speech detection info
         """
-        # CRITICAL: Silero VAD requires EXACTLY 512 samples at 16kHz, not just minimum
-        REQUIRED_SIZE = 512
+        # Calculate RMS energy
+        rms = np.sqrt(np.mean(audio_chunk ** 2))
         
-        # Pad if too small
-        if len(audio_chunk) < REQUIRED_SIZE:
-            audio_chunk = np.pad(
-                audio_chunk, 
-                (0, REQUIRED_SIZE - len(audio_chunk)), 
-                mode='constant',
-                constant_values=0
-            )
-        # Trim if too large - CRITICAL FIX
-        elif len(audio_chunk) > REQUIRED_SIZE:
-            audio_chunk = audio_chunk[:REQUIRED_SIZE]
-        
-        # Convert to torch tensor
-        if isinstance(audio_chunk, np.ndarray):
-            audio_tensor = torch.from_numpy(audio_chunk).float()
-        else:
-            audio_tensor = audio_chunk
-        
-        # Get speech probability
-        try:
-            speech_prob = self.model(audio_tensor, self.sampling_rate).item()
-        except Exception as e:
-            logger.error(f"VAD processing error: {e}, chunk shape: {audio_chunk.shape}")
-            # Return neutral result on error
-            return {
-                'is_speech': False,
-                'speech_prob': 0.0,
-                'timestamp': time.time(),
-                'error': str(e)
-            }
-        
-        is_speech = speech_prob > self.threshold
+        # Speech detected if energy above threshold
+        is_speech = rms > self.threshold
         
         return {
             'is_speech': is_speech,
-            'speech_prob': speech_prob,
+            'speech_prob': min(rms / self.threshold, 1.0),
             'timestamp': time.time()
         }
-    
-    def detect_speech_segments(self, audio: np.ndarray) -> List[Dict]:
-        """
-        Detect speech segments in audio buffer
-        
-        Args:
-            audio: Complete audio buffer
-            
-        Returns:
-            List of speech segments with start/end timestamps
-        """
-        # Validate minimum size
-        if len(audio) < self.MIN_CHUNK_SIZE:
-            logger.warning(f"Audio buffer too short for VAD: {len(audio)} samples")
-            return []
-        
-        audio_tensor = torch.from_numpy(audio).float()
-        
-        try:
-            speech_timestamps = self.get_speech_timestamps(
-                audio_tensor,
-                self.model,
-                sampling_rate=self.sampling_rate,
-                threshold=self.threshold,
-                min_speech_duration_ms=self.min_speech_duration_ms,
-                min_silence_duration_ms=self.min_silence_duration_ms
-            )
-        except Exception as e:
-            logger.error(f"Speech segmentation error: {e}")
-            return []
-        
-        return speech_timestamps
 
 
 class StreamingAudioBuffer:
@@ -323,10 +233,9 @@ class StreamingAudioProcessor:
         self.sample_rate = sample_rate
         
         # Initialize VAD
-        self.vad = SileroVAD(
+        self.vad = SimpleVAD(
             threshold=vad_threshold,
-            sampling_rate=sample_rate,
-            min_silence_duration_ms=silence_duration_ms
+            sampling_rate=sample_rate
         )
         
         # Initialize buffer
@@ -358,58 +267,23 @@ class StreamingAudioProcessor:
                 logger.warning("Empty audio chunk received, skipping")
                 return
             
-            # Process in 512-sample windows (required by VAD)
-            WINDOW_SIZE = 512
-            
-            # Split audio into 512-sample windows
-            num_windows = len(audio_data) // WINDOW_SIZE
-            
-            if num_windows == 0:
-                # Chunk smaller than window, pad and process
-                vad_result = self.vad.process_chunk(audio_data)
-            else:
-                # Process each window and average the results
-                speech_probs = []
-                for i in range(num_windows):
-                    window = audio_data[i * WINDOW_SIZE : (i + 1) * WINDOW_SIZE]
-                    vad_result = self.vad.process_chunk(window)
-                    
-                    if 'error' not in vad_result:
-                        speech_probs.append(vad_result['speech_prob'])
-                
-                # Average speech probability across windows
-                if speech_probs:
-                    avg_speech_prob = sum(speech_probs) / len(speech_probs)
-                    vad_result = {
-                        'is_speech': avg_speech_prob > self.vad.threshold,
-                        'speech_prob': avg_speech_prob,
-                        'timestamp': time.time()
-                    }
-                else:
-                    # All windows had errors
-                    self.processing_stats['vad_errors'] += 1
-                    return
+            # Simple energy-based VAD (no size restrictions)
+            vad_result = self.vad.process_chunk(audio_data)
             
             if 'error' in vad_result:
                 self.processing_stats['vad_errors'] += 1
-                logger.warning(f"VAD error count: {self.processing_stats['vad_errors']}")
                 return
             
             is_speech = vad_result['is_speech']
             
             logger.debug(f"Chunk: {len(audio_data)} samples, speech_prob: {vad_result['speech_prob']:.3f}, is_speech: {is_speech}")
             
-            # Add to buffer (original full chunk)
+            # Add to buffer
             ready_segment = self.buffer.add_chunk(audio_data, is_speech)
             
             # If segment is ready, trigger callback
             if ready_segment is not None:
                 logger.info(f"Segment ready for transcription: {len(ready_segment)} samples ({len(ready_segment)/self.sample_rate:.2f}s)")
-                
-                # Validate segment has content
-                if len(ready_segment) < 512:
-                    logger.warning(f"Segment too short: {len(ready_segment)} samples")
-                    return
                 
                 start_time = time.time()
                 
