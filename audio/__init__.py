@@ -1,13 +1,13 @@
 from .streaming_processor import (
     StreamingAudioProcessor,
-    SileroVAD,
+    SimpleVAD,
     StreamingAudioBuffer,
     AudioChunk
 )
 
 __all__ = [
     'StreamingAudioProcessor',
-    'SileroVAD', 
+    'SimpleVAD', 
     'StreamingAudioBuffer',
     'AudioChunk'
 ]
